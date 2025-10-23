@@ -552,7 +552,7 @@ public class ChatClient extends JFrame {
             nameLabel = new JLabel();
             nameLabel.setBorder(BorderFactory.createEmptyBorder(2, 5, 2, 5));
 
-            callButton = new JLabel("📞");
+            callButton = new JLabel("((\uD83D\uDCDE))");
             callButton.setFont(new Font("Dialog", Font.PLAIN, 16));
             callButton.setBorder(BorderFactory.createEmptyBorder(2, 5, 2, 5));
             callButton.setHorizontalAlignment(SwingConstants.CENTER);
