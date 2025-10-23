@@ -72,6 +72,30 @@ public class Server {
                         broadcastUserList();
                     } else if (msg.equals("GET_USERS")) {
                         sendUserList(this);
+                    } else if (msg.startsWith("CALL_REQUEST ")) {
+                        // Forward call request to target user
+                        String targetUser = msg.substring(13);
+                        forwardToUser(targetUser, "CALL_REQUEST " + clientName);
+                    } else if (msg.startsWith("CALL_ACCEPT ")) {
+                        // Forward call acceptance to caller
+                        String callerUser = msg.substring(12);
+                        forwardToUser(callerUser, "CALL_ACCEPT " + clientName);
+                    } else if (msg.startsWith("CALL_REJECT ")) {
+                        // Forward call rejection to caller
+                        String callerUser = msg.substring(12);
+                        forwardToUser(callerUser, "CALL_REJECT " + clientName);
+                    } else if (msg.startsWith("CALL_END ")) {
+                        // Forward call end to other user
+                        String otherUser = msg.substring(9);
+                        forwardToUser(otherUser, "CALL_END " + clientName);
+                    } else if (msg.startsWith("VOICE_DATA ")) {
+                        // Forward voice data to target user
+                        String[] parts = msg.substring(11).split(" ", 2);
+                        if (parts.length == 2) {
+                            String targetUser = parts[0];
+                            String voiceData = parts[1];
+                            forwardToUser(targetUser, "VOICE_DATA " + clientName + " " + voiceData);
+                        }
                     }
                 }
             } catch (IOException e) {
@@ -132,6 +156,19 @@ public class Server {
                 for (ClientHandler client : clients) {
                     if (client.out != null) {
                         client.out.println(message);
+                    }
+                }
+            }
+        }
+
+        private void forwardToUser(String targetUsername, String message) {
+            synchronized (clients) {
+                for (ClientHandler client : clients) {
+                    if (client.clientName != null && client.clientName.equals(targetUsername)) {
+                        if (client.out != null) {
+                            client.out.println(message);
+                        }
+                        break;
                     }
                 }
             }

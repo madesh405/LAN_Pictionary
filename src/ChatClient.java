@@ -1,10 +1,12 @@
 import javax.swing.*;
+import javax.sound.sampled.*;
 import javax.swing.Timer;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.Base64;
 
 public class ChatClient extends JFrame {
     private Canvas canvas;
@@ -19,6 +21,10 @@ public class ChatClient extends JFrame {
     private String username;
     private Timer pingTimer;
     private long lastPingTime;
+    private String currentCallUser = null;
+    private boolean isInCall = false;
+    private AudioCapture audioCapture;
+    private AudioPlayback audioPlayback;
 
     public ChatClient() {
         setTitle("Pictionary Client");
@@ -39,10 +45,33 @@ public class ChatClient extends JFrame {
         usersLabel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
         rightPanel.add(usersLabel, BorderLayout.NORTH);
 
+        // Panel to hold user list with call buttons
+        JPanel userListPanel = new JPanel(new BorderLayout());
         userListModel = new DefaultListModel<>();
         userList = new JList<>(userListModel);
         userList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        userList.setCellRenderer(new UserListCellRenderer());
+
+        userList.addMouseListener(new MouseAdapter() {
+            public void mouseClicked(MouseEvent e) {
+                int index = userList.locationToIndex(e.getPoint());
+                if (index >= 0) {
+                    Rectangle cellBounds = userList.getCellBounds(index, index);
+                    // Check if click is in the call button area (right 40 pixels)
+                    if (e.getX() > cellBounds.x + cellBounds.width - 40) {
+                        String selectedUser = userListModel.getElementAt(index);
+                        if (!selectedUser.equals(username)) {
+                            initiateCall(selectedUser);
+                        } else {
+                            JOptionPane.showMessageDialog(ChatClient.this, "You cannot call yourself!", "Error", JOptionPane.WARNING_MESSAGE);
+                        }
+                    }
+                }
+            }
+        });
+
         JScrollPane userScroll = new JScrollPane(userList);
+        userListPanel.add(userScroll, BorderLayout.CENTER);
         rightPanel.add(userScroll, BorderLayout.CENTER);
 
         add(rightPanel, BorderLayout.EAST);
@@ -155,6 +184,27 @@ public class ChatClient extends JFrame {
                         } else if (msg.startsWith("USERS ")) {
                             String userListStr = msg.substring(6);
                             SwingUtilities.invokeLater(() -> updateUserList(userListStr));
+                        } else if (msg.startsWith("CALL_REQUEST ")) {
+                            String caller = msg.substring(13);
+                            SwingUtilities.invokeLater(() -> handleCallRequest(caller));
+                        } else if (msg.startsWith("CALL_ACCEPT ")) {
+                            String callee = msg.substring(12);
+                            SwingUtilities.invokeLater(() -> handleCallAccept(callee));
+                        } else if (msg.startsWith("CALL_REJECT ")) {
+                            String callee = msg.substring(12);
+                            SwingUtilities.invokeLater(() -> handleCallReject(callee));
+                        } else if (msg.startsWith("CALL_END ")) {
+                            String otherUser = msg.substring(9);
+                            SwingUtilities.invokeLater(() -> handleCallEnd(otherUser));
+                        } else if (msg.startsWith("VOICE_DATA ")) {
+                            String[] parts = msg.substring(11).split(" ", 2);
+                            if (parts.length == 2) {
+                                String sender = parts[0];
+                                String voiceData = parts[1];
+                                if (isInCall && sender.equals(currentCallUser)) {
+                                    playAudio(voiceData);
+                                }
+                            }
                         }
                     }
                 } catch (IOException e) {
@@ -206,6 +256,217 @@ public class ChatClient extends JFrame {
     private void clearCanvas() {
         out.println("CLEAR");
         canvas.clear();
+    }
+
+    private void initiateCall(String targetUser) {
+        if (isInCall) {
+            JOptionPane.showMessageDialog(this, "You are already in a call!", "Error", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        currentCallUser = targetUser;
+        out.println("CALL_REQUEST " + targetUser);
+        chatArea.append("Calling " + targetUser + "...\n");
+    }
+
+    private void handleCallRequest(String caller) {
+        if (isInCall) {
+            out.println("CALL_REJECT " + caller);
+            return;
+        }
+
+        int response = JOptionPane.showConfirmDialog(this,
+                caller + " is calling you. Accept?",
+                "Incoming Call",
+                JOptionPane.YES_NO_OPTION);
+
+        if (response == JOptionPane.YES_OPTION) {
+            currentCallUser = caller;
+            isInCall = true;
+            out.println("CALL_ACCEPT " + caller);
+            chatArea.append("Voice call started with " + caller + "\n");
+            startVoiceChat();
+        } else {
+            out.println("CALL_REJECT " + caller);
+        }
+    }
+
+    private void handleCallAccept(String callee) {
+        isInCall = true;
+        chatArea.append("Voice call started with " + callee + "\n");
+        startVoiceChat();
+
+        // Show end call button in a non-blocking way
+        SwingUtilities.invokeLater(() -> {
+            JButton endCallBtn = new JButton("End Call");
+            JDialog callDialog = new JDialog(this, "Voice Call", false);
+            callDialog.setLayout(new BorderLayout());
+
+            JLabel callLabel = new JLabel("Voice call active with " + callee, SwingConstants.CENTER);
+            callLabel.setBorder(BorderFactory.createEmptyBorder(20, 20, 10, 20));
+            callDialog.add(callLabel, BorderLayout.CENTER);
+
+            JPanel buttonPanel = new JPanel();
+            endCallBtn.setBackground(new Color(220, 50, 50));
+            endCallBtn.setForeground(Color.WHITE);
+            endCallBtn.setFocusPainted(false);
+            buttonPanel.add(endCallBtn);
+            callDialog.add(buttonPanel, BorderLayout.SOUTH);
+
+            endCallBtn.addActionListener(e -> {
+                endCall();
+                callDialog.dispose();
+            });
+
+            callDialog.pack();
+            callDialog.setLocationRelativeTo(this);
+            callDialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+            callDialog.addWindowListener(new WindowAdapter() {
+                public void windowClosing(WindowEvent e) {
+                    endCall();
+                    callDialog.dispose();
+                }
+            });
+            callDialog.setVisible(true);
+        });
+    }
+
+    private void handleCallReject(String callee) {
+        currentCallUser = null;
+        chatArea.append(callee + " rejected your call.\n");
+        JOptionPane.showMessageDialog(this, callee + " rejected your call.", "Call Rejected", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void handleCallEnd(String otherUser) {
+        stopVoiceChat();
+        isInCall = false;
+        currentCallUser = null;
+        chatArea.append("Call ended with " + otherUser + ".\n");
+        JOptionPane.showMessageDialog(this, "Call ended.", "Call Ended", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void endCall() {
+        if (isInCall && currentCallUser != null) {
+            out.println("CALL_END " + currentCallUser);
+            stopVoiceChat();
+            isInCall = false;
+            chatArea.append("Call ended with " + currentCallUser + ".\n");
+            currentCallUser = null;
+        }
+    }
+
+    private void startVoiceChat() {
+        try {
+            audioCapture = new AudioCapture();
+            audioPlayback = new AudioPlayback();
+            audioCapture.start();
+            audioPlayback.start();
+        } catch (Exception e) {
+            chatArea.append("Error starting voice chat: " + e.getMessage() + "\n");
+            endCall();
+        }
+    }
+
+    private void stopVoiceChat() {
+        if (audioCapture != null) {
+            audioCapture.stopCapture();
+            audioCapture = null;
+        }
+        if (audioPlayback != null) {
+            audioPlayback.stopPlayback();
+            audioPlayback = null;
+        }
+    }
+
+    private void playAudio(String base64Data) {
+        if (audioPlayback != null) {
+            try {
+                byte[] audioData = Base64.getDecoder().decode(base64Data);
+                audioPlayback.play(audioData);
+            } catch (Exception e) {
+                // Silently ignore decode errors
+            }
+        }
+    }
+
+    // Audio capture class
+    class AudioCapture extends Thread {
+        private TargetDataLine microphone;
+        private volatile boolean running = true;
+
+        public AudioCapture() throws LineUnavailableException {
+            AudioFormat format = new AudioFormat(8000, 16, 1, true, true);
+            DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
+            microphone = (TargetDataLine) AudioSystem.getLine(info);
+            microphone.open(format);
+        }
+
+        public void run() {
+            microphone.start();
+            byte[] buffer = new byte[1024];
+
+            while (running) {
+                int bytesRead = microphone.read(buffer, 0, buffer.length);
+                if (bytesRead > 0 && isInCall && currentCallUser != null) {
+                    String encoded = Base64.getEncoder().encodeToString(Arrays.copyOf(buffer, bytesRead));
+                    out.println("VOICE_DATA " + currentCallUser + " " + encoded);
+                }
+            }
+        }
+
+        public void stopCapture() {
+            running = false;
+            if (microphone != null) {
+                microphone.stop();
+                microphone.close();
+            }
+        }
+    }
+
+    // Audio playback class
+    class AudioPlayback extends Thread {
+        private SourceDataLine speakers;
+        private volatile boolean running = true;
+        private java.util.concurrent.BlockingQueue<byte[]> audioQueue;
+
+        public AudioPlayback() throws LineUnavailableException {
+            AudioFormat format = new AudioFormat(8000, 16, 1, true, true);
+            DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+            speakers = (SourceDataLine) AudioSystem.getLine(info);
+            speakers.open(format);
+            audioQueue = new java.util.concurrent.LinkedBlockingQueue<>();
+        }
+
+        public void run() {
+            speakers.start();
+
+            while (running) {
+                try {
+                    byte[] audioData = audioQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    if (audioData != null) {
+                        speakers.write(audioData, 0, audioData.length);
+                    }
+                } catch (InterruptedException e) {
+                    break;
+                }
+            }
+        }
+
+        public void play(byte[] audioData) {
+            try {
+                audioQueue.offer(audioData);
+            } catch (Exception e) {
+                // Silently ignore
+            }
+        }
+
+        public void stopPlayback() {
+            running = false;
+            if (speakers != null) {
+                speakers.drain();
+                speakers.stop();
+                speakers.close();
+            }
+        }
     }
 
     // Canvas class for drawing
@@ -276,6 +537,54 @@ public class ChatClient extends JFrame {
                 g2.fillRect(0, 0, getWidth(), getHeight());
                 repaint();
             }
+        }
+    }
+
+    // Custom cell renderer for user list with call button
+    class UserListCellRenderer extends JPanel implements ListCellRenderer<String> {
+        private JLabel nameLabel;
+        private JLabel callButton;
+
+        public UserListCellRenderer() {
+            setLayout(new BorderLayout(5, 0));
+            setOpaque(true);
+
+            nameLabel = new JLabel();
+            nameLabel.setBorder(BorderFactory.createEmptyBorder(2, 5, 2, 5));
+
+            callButton = new JLabel("📞");
+            callButton.setFont(new Font("Dialog", Font.PLAIN, 16));
+            callButton.setBorder(BorderFactory.createEmptyBorder(2, 5, 2, 5));
+            callButton.setHorizontalAlignment(SwingConstants.CENTER);
+            callButton.setPreferredSize(new Dimension(35, 20));
+
+            add(nameLabel, BorderLayout.CENTER);
+            add(callButton, BorderLayout.EAST);
+        }
+
+        @Override
+        public Component getListCellRendererComponent(JList<? extends String> list, String value,
+                                                      int index, boolean isSelected, boolean cellHasFocus) {
+            nameLabel.setText(value);
+
+            // Hide call button for own username
+            if (value.equals(username)) {
+                callButton.setVisible(false);
+            } else {
+                callButton.setVisible(true);
+            }
+
+            if (isSelected) {
+                setBackground(list.getSelectionBackground());
+                setForeground(list.getSelectionForeground());
+                nameLabel.setForeground(list.getSelectionForeground());
+            } else {
+                setBackground(list.getBackground());
+                setForeground(list.getForeground());
+                nameLabel.setForeground(list.getForeground());
+            }
+
+            return this;
         }
     }
 
