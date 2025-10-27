@@ -1,6 +1,6 @@
 # LAN Pictionary - Multiplayer Drawing & Voice Chat
 
-A real-time multiplayer drawing game with integrated voice chat, built with Java Swing.
+A real-time multiplayer drawing application with integrated voice chat, built with Java Swing.
 
 ## Features
 
