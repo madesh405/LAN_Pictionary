@@ -25,7 +25,7 @@ Clone or download the repository:
 
 ```bash
 git clone https://github.com/madesh405/LAN_Pictionary.git
-cd lan-pictionary
+cd LAN_Pictionary
 ```
 
 Compile the source files:
