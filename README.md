@@ -24,7 +24,7 @@ A real-time multiplayer drawing application with integrated voice chat, built wi
 Clone or download the repository:
 
 ```bash
-git clone https://github.com/madesh405/lan-pictionary.git
+git clone https://github.com/madesh405/LAN_Pictionary.git
 cd lan-pictionary
 ```
 
